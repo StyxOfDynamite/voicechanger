@@ -467,7 +467,7 @@ class VoiceChanger {
         
         // Create pitch fluctuation using LFO
         oscillator.type = 'sine';
-        oscillator.frequency.value = 0.7; // Slow fluctuation
+        oscillator.frequency.value = 0.7;
         oscillatorGain.gain.value = 0.1; // Pitch variance amount
         
         // Base pitch for ghost effect
