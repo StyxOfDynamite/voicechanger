@@ -317,73 +317,59 @@ class VoiceChanger {
         // Render the audio
         const renderedBuffer = await offlineContext.startRendering();
         
-        // Convert to WAV
-        const wavBlob = this.bufferToWav(renderedBuffer);
+        // Convert to MP3
+        const mp3Blob = this.bufferToMp3(renderedBuffer);
         
         // Create download link
-        const url = URL.createObjectURL(wavBlob);
+        const url = URL.createObjectURL(mp3Blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `voice-${effectType}-effect.wav`;
+        a.download = `voice-${effectType}-effect.mp3`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     }
 
-    bufferToWav(buffer) {
+    bufferToMp3(buffer) {
         const numChannels = buffer.numberOfChannels;
         const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-        const bytesPerSample = bitDepth / 8;
-        const blockAlign = numChannels * bytesPerSample;
-        const byteRate = sampleRate * blockAlign;
-        const dataSize = buffer.length * blockAlign;
-        const headerSize = 44;
-        const totalSize = headerSize + dataSize;
-        const arrayBuffer = new ArrayBuffer(totalSize);
-        const view = new DataView(arrayBuffer);
+        const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, 128);
+        const mp3Data = [];
 
-        // Write WAV header
-        this.writeString(view, 0, 'RIFF');
-        view.setUint32(4, totalSize - 8, true);
-        this.writeString(view, 8, 'WAVE');
-        this.writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, byteRate, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bitDepth, true);
-        this.writeString(view, 36, 'data');
-        view.setUint32(40, dataSize, true);
+        // Get audio data from buffer
+        const leftChannel = buffer.getChannelData(0);
+        const rightChannel = numChannels > 1 ? buffer.getChannelData(1) : leftChannel;
 
-        // Write audio data
-        const offset = 44;
-        const channelData = [];
-        for (let i = 0; i < numChannels; i++) {
-            channelData.push(buffer.getChannelData(i));
-        }
+        // Convert float32 to int16
+        const sampleBlockSize = 1152; // must be multiple of 576
+        const leftSamples = new Int16Array(sampleBlockSize);
+        const rightSamples = new Int16Array(sampleBlockSize);
 
-        let pos = 0;
-        while (pos < buffer.length) {
-            for (let i = 0; i < numChannels; i++) {
-                const sample = Math.max(-1, Math.min(1, channelData[i][pos]));
-                const value = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                view.setInt16(offset + pos * blockAlign + i * bytesPerSample, value, true);
+        for (let i = 0; i < buffer.length; i += sampleBlockSize) {
+            const blockLength = Math.min(sampleBlockSize, buffer.length - i);
+            
+            // Convert samples to int16
+            for (let j = 0; j < blockLength; j++) {
+                leftSamples[j] = Math.max(-32768, Math.min(32767, leftChannel[i + j] * 32768));
+                rightSamples[j] = Math.max(-32768, Math.min(32767, rightChannel[i + j] * 32768));
             }
-            pos++;
+
+            // Encode the block
+            const mp3buf = mp3encoder.encodeBuffer(leftSamples, rightSamples);
+            if (mp3buf.length > 0) {
+                mp3Data.push(mp3buf);
+            }
         }
 
-        return new Blob([arrayBuffer], { type: 'audio/wav' });
-    }
-
-    writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
+        // Flush the encoder
+        const end = mp3encoder.flush();
+        if (end.length > 0) {
+            mp3Data.push(end);
         }
+
+        // Create blob from all the MP3 data
+        return new Blob(mp3Data, { type: 'audio/mp3' });
     }
 
     async applyAlienEffect(source, gainNode, context = this.audioContext) {
